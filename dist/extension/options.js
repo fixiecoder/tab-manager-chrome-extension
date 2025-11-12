@@ -144,10 +144,39 @@ function addRuleRow() {
   tbody.appendChild(ruleRow());
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function applyPrepopulatedRule(pre) {
+  if (!pre || !pre.pattern) return;
+  const tbody = $('#rules-tbody');
+  const firstRow = tbody.querySelector('tr');
+  if (firstRow) {
+    const [ipPattern, ipTitle, selColor] = firstRow.querySelectorAll('input, select');
+    if (ipPattern && !ipPattern.value) {
+      ipPattern.value = pre.pattern || '';
+      if (pre.title != null) ipTitle.value = pre.title;
+      if (pre.color && COLORS.includes(pre.color)) selColor.value = pre.color;
+      ipPattern.focus();
+      return;
+    }
+  }
+  const row = ruleRow(pre);
+  tbody.insertBefore(row, tbody.firstChild);
+  const ip = row.querySelector('input');
+  if (ip) ip.focus();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
   $('#add-rule').addEventListener('click', addRuleRow);
   $('#save-rules').addEventListener('click', saveRules);
-  loadRules();
+  await loadRules();
+  try {
+    const { prepopulateRule } = await chrome.storage.local.get({ prepopulateRule: null });
+    if (prepopulateRule) {
+      applyPrepopulatedRule(prepopulateRule);
+      await chrome.storage.local.remove('prepopulateRule');
+    }
+  } catch {
+    // ignore
+  }
 });
 
 

@@ -297,4 +297,21 @@ chrome.tabGroups.onUpdated.addListener((group) => {
   }
 });
 
+// Keyboard command: open options with prepopulated rule from active tab
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'open-rule-creator') return;
+  try {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const url = active && (active.url || active.pendingUrl);
+    const host = url ? getHostFromUrl(url) : null;
+    const prepopulateRule = host ? { pattern: host, color: 'grey', title: '' } : null;
+    if (prepopulateRule) {
+      await chrome.storage.local.set({ prepopulateRule });
+    }
+    await chrome.runtime.openOptionsPage();
+  } catch {
+    chrome.runtime.openOptionsPage();
+  }
+});
+
 

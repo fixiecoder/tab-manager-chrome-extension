@@ -8,6 +8,15 @@
     "service_worker": "background.js"
   },
   "options_page": "options.html",
-  "minimum_chrome_version": "90"
+  "minimum_chrome_version": "90",
+  "commands": {
+    "open-rule-creator": {
+      "suggested_key": {
+        "default": "Alt+Shift+G",
+        "mac": "Alt+Shift+G"
+      },
+      "description": "Open options and prepopulate a rule from the active tab"
+    }
+  }
 }
 
