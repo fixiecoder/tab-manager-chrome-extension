@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto Tab Grouper Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+
+<body>
+  <main class="container">
+    <h1>Auto Tab Grouper</h1>
+    <p>Configure host patterns to automatically group tabs.</p>
+
+    <section>
+      <div class="actions">
+        <button id="add-rule">Add rule</button>
+        <button id="save-rules" class="primary">Save</button>
+      </div>
+      <table class="rules">
+        <thead>
+          <tr>
+            <th style="width:40%">Pattern</th>
+            <th style="width:35%">Title (optional)</th>
+            <th style="width:15%">Color</th>
+            <th style="width:10%"></th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody"></tbody>
+      </table>
+      <div class="help">
+        <p>
+          Matching rules:
+        </p>
+        <ul>
+          <li><code>example.com</code> matches only <code>example.com</code> (any path)</li>
+          <li><code>*.example.com</code> matches <code>a.example.com</code>, <code>b.a.example.com</code> (not
+            <code>example.com</code>)
+          </li>
+          <li><code>example.com/docs</code> matches exactly the path <code>/docs</code></li>
+          <li><code>example.com/docs/*</code> matches any path under <code>/docs/</code></li>
+          <li><code>*.example.com/*</code> matches any path on any subdomain</li>
+        </ul>
+      </div>
+    </section>
+
+    <p id="status" aria-live="polite"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+
+</html>

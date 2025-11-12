@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Tab Grouper by Domain",
+  "version": "0.1.0",
+  "description": "Automatically group tabs by configured domains or wildcard subdomains.",
+  "permissions": ["tabs", "tabGroups", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "minimum_chrome_version": "90"
+}
+

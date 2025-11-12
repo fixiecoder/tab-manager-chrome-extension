@@ -1,0 +1,17 @@
+{
+  "name": "tab-manager-chrome-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Automatically group Chrome tabs by configured domains or wildcard subdomains.",
+  "license": "MIT",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && mkdir -p dist/extension && cp manifest.json background.js options.html options.css options.js dist/extension/",
+    "zip": "cd dist && zip -r extension.zip extension",
+    "package": "npm run build && npm run zip"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+
