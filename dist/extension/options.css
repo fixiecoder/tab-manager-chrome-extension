@@ -76,7 +76,7 @@ table.rules td {
   border-bottom: 1px solid var(--border);
   padding: 8px;
   text-align: left;
-  vertical-align: middle;
+  vertical-align: top;
 }
 
 table.rules thead th {

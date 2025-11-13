@@ -219,6 +219,28 @@ async function dedupeGroups(windowId, title, color) {
 }
 
 /**
+ * Move the group with given title to the far left (after any pinned tabs).
+ * Finds the canonical group by title in the window (after any dedupe).
+ * Best-effort; errors are ignored.
+ * @param {number} windowId
+ * @param {string} title
+ */
+async function ensureGroupAtLeft(windowId, title) {
+  try {
+    if (windowId == null || !title) return;
+    const groups = await chrome.tabGroups.query({ windowId });
+    const match = groups.find(g => g.title === title);
+    if (!match) return;
+    // Compute index after pinned tabs
+    const pinned = await chrome.tabs.query({ windowId, pinned: true });
+    const pinnedCount = Array.isArray(pinned) ? pinned.length : 0;
+    await chrome.tabGroups.move(match.id, { index: pinnedCount });
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Ensure the given tab is in the appropriate group for the rule.
  * Reuses existing group with the same title in the same window, otherwise creates a new one.
  * @param {chrome.tabs.Tab} tab
@@ -237,6 +259,8 @@ async function ensureTabInGroup(tab, groupInfo) {
     await chrome.tabs.group({ tabIds: [tab.id], groupId: existing.id });
     // Best-effort dedupe in case duplicates exist
     await dedupeGroups(tab.windowId, title, color);
+    // Keep groups to the left of ungrouped tabs
+    await ensureGroupAtLeft(tab.windowId, title);
     return existing.id;
   }
 
@@ -245,6 +269,8 @@ async function ensureTabInGroup(tab, groupInfo) {
   await chrome.tabGroups.update(groupId, { title, color });
   // Immediately try to dedupe after setting title/color (handles race where multiple tabs create simultaneously)
   await dedupeGroups(tab.windowId, title, color);
+  // Keep groups to the left of ungrouped tabs
+  await ensureGroupAtLeft(tab.windowId, title);
   return groupId;
 }
 
@@ -326,12 +352,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabGroups.onCreated.addListener((group) => {
   if (group && group.title && group.windowId != null) {
     dedupeGroups(group.windowId, group.title, group.color);
+    ensureGroupAtLeft(group.windowId, group.title);
   }
 });
 
 chrome.tabGroups.onUpdated.addListener((group) => {
   if (group && group.title && group.windowId != null) {
     dedupeGroups(group.windowId, group.title, group.color);
+    ensureGroupAtLeft(group.windowId, group.title);
   }
 });
 
