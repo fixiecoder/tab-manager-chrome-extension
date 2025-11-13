@@ -84,13 +84,40 @@ table.rules thead th {
   font-weight: 600;
 }
 
-input[type="text"], select {
+input[type="text"], select, textarea {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: white;
   color: var(--fg);
+}
+
+textarea {
+  min-height: 72px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  resize: vertical;
+}
+
+.pattern-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pattern-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pattern-item input[type="text"] {
+  flex: 1;
+}
+
+button.tiny {
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .help {

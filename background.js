@@ -15,12 +15,49 @@ const ALLOWED_GROUP_COLORS = new Set([
 
 /**
  * Read grouping rules from storage.sync.
- * Each rule: { pattern: string, color: string, title?: string }
- * @returns {Promise<Array<{pattern:string,color:string,title?:string}>>}
+ * New schema (preferred):
+ *   Array<{
+ *     title: string,
+ *     color: string,
+ *     patterns: string[] // each is a pattern (host or host+path with optional '*')
+ *   }>
+ * Legacy schema (supported, auto-migrated):
+ *   Array<{ pattern: string, color: string, title?: string }>
+ * @returns {Promise<Array<{title:string,color:string,patterns:string[]}>>}
  */
-async function getRules() {
+async function getGroups() {
   const { groupingRules } = await chrome.storage.sync.get({ groupingRules: [] });
-  return Array.isArray(groupingRules) ? groupingRules : [];
+  const data = Array.isArray(groupingRules) ? groupingRules : [];
+  if (data.length === 0) return [];
+  // New schema detection
+  if (data[0] && Array.isArray(data[0].patterns)) {
+    return data.map(g => ({
+      title: String(g.title || '').trim(),
+      color: normalizeColor(g.color),
+      patterns: Array.isArray(g.patterns) ? g.patterns.filter(Boolean) : []
+    })).filter(g => g.title && g.patterns.length > 0);
+  }
+  // Legacy schema → migrate in-memory and write back
+  const byTitle = new Map();
+  for (const r of data) {
+    if (!r || typeof r.pattern !== 'string') continue;
+    const title = (r.title && String(r.title).trim()) || r.pattern;
+    const color = normalizeColor(r.color);
+    if (!byTitle.has(title)) {
+      byTitle.set(title, { title, color, patterns: [] });
+    }
+    const g = byTitle.get(title);
+    if (!g.patterns.includes(r.pattern)) g.patterns.push(r.pattern);
+    // Prefer first seen non-default color
+    if (g.color === 'grey' && color !== 'grey') g.color = color;
+  }
+  const groups = Array.from(byTitle.values());
+  try {
+    await chrome.storage.sync.set({ groupingRules: groups });
+  } catch {
+    // ignore write errors
+  }
+  return groups;
 }
 
 /**
@@ -130,18 +167,19 @@ function patternMatchesUrl(pattern, host, pathname) {
 
 /**
  * Find the first matching rule for a host.
+ * Returns the matching group (title, color) or null.
  * @param {string} host
- * @param {Array<{pattern:string,color:string,title?:string}>} rules
+ * @param {string} pathname
+ * @param {Array<{title:string,color:string,patterns:string[]}>} groups
  */
-function findMatchingRule(host, pathname, rules) {
+function findMatchingGroup(host, pathname, groups) {
   if (!host) return null;
-  for (const rule of rules) {
-    if (rule && typeof rule.pattern === 'string' && patternMatchesUrl(rule.pattern, host, pathname)) {
-      return {
-        pattern: rule.pattern,
-        color: normalizeColor(rule.color),
-        title: rule.title && String(rule.title).trim() ? String(rule.title).trim() : rule.pattern
-      };
+  for (const g of groups) {
+    if (!g || !g.title || !Array.isArray(g.patterns)) continue;
+    for (const p of g.patterns) {
+      if (typeof p === 'string' && patternMatchesUrl(p, host, pathname)) {
+        return { title: g.title, color: normalizeColor(g.color) };
+      }
     }
   }
   return null;
@@ -184,13 +222,13 @@ async function dedupeGroups(windowId, title, color) {
  * Ensure the given tab is in the appropriate group for the rule.
  * Reuses existing group with the same title in the same window, otherwise creates a new one.
  * @param {chrome.tabs.Tab} tab
- * @param {{pattern:string,color:string,title:string}} rule
+ * @param {{color:string,title:string}} groupInfo
  * @returns {Promise<number>} groupId
  */
-async function ensureTabInGroup(tab, rule) {
+async function ensureTabInGroup(tab, groupInfo) {
   if (!tab || tab.id == null || tab.windowId == null) return -1;
-  const title = rule.title;
-  const color = rule.color;
+  const title = groupInfo.title;
+  const color = groupInfo.color;
 
   // Find existing group by title in the same window
   const groups = await chrome.tabGroups.query({ windowId: tab.windowId });
@@ -233,10 +271,10 @@ async function processTab(tab) {
   const host = url ? getHostFromUrl(url) : null;
   if (!host) return;
   const path = url ? getPathFromUrl(url) : null;
-  const rules = await getRules();
-  const rule = findMatchingRule(host, path || '/', rules);
-  if (!rule) return;
-  await ensureTabInGroup(tab, rule);
+  const groups = await getGroups();
+  const match = findMatchingGroup(host, path || '/', groups);
+  if (!match) return;
+  await ensureTabInGroup(tab, match);
 }
 
 /**

@@ -30,33 +30,56 @@ function colorSelect(value = 'grey') {
   return select;
 }
 
-function ruleRow(rule = { pattern: '', title: '', color: 'grey' }) {
+function patternItem(initial = '') {
+  const wrap = el('div', { class: 'pattern-item' });
+  const input = el('input', { type: 'text', placeholder: 'example.com, *.example.com, example.com/docs/*' });
+  input.value = initial || '';
+  const removeBtn = el('button', { type: 'button', class: 'tiny danger' }, 'Remove');
+  removeBtn.addEventListener('click', () => {
+    wrap.remove();
+  });
+  wrap.appendChild(input);
+  wrap.appendChild(removeBtn);
+  return wrap;
+}
+
+function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
   const tr = el('tr');
-  const tdPattern = el('td');
   const tdTitle = el('td');
+  const tdPatterns = el('td');
   const tdColor = el('td');
   const tdActions = el('td');
 
-  const ipPattern = el('input', { type: 'text', placeholder: 'example.com, *.example.com, example.com/path, *.example.com/docs/*' });
-  ipPattern.value = rule.pattern || '';
+  const ipTitle = el('input', { type: 'text', placeholder: 'Group title' });
+  ipTitle.value = group.title || '';
 
-  const ipTitle = el('input', { type: 'text', placeholder: 'Group title (optional)' });
-  ipTitle.value = rule.title || '';
+  const list = el('div', { class: 'pattern-list' });
+  const patterns = Array.isArray(group.patterns) && group.patterns.length ? group.patterns : [''];
+  for (const p of patterns) {
+    list.appendChild(patternItem(p));
+  }
+  const addBtn = el('button', { type: 'button', class: 'tiny' }, 'Add pattern');
+  addBtn.addEventListener('click', () => {
+    list.appendChild(patternItem(''));
+    const lastInput = list.querySelector('.pattern-item:last-child input');
+    if (lastInput) lastInput.focus();
+  });
 
-  const selColor = colorSelect(rule.color || 'grey');
+  const selColor = colorSelect(group.color || 'grey');
 
   const btnRemove = el('button', { class: 'danger', type: 'button' }, 'Remove');
   btnRemove.addEventListener('click', () => {
     tr.remove();
   });
 
-  tdPattern.appendChild(ipPattern);
   tdTitle.appendChild(ipTitle);
+  tdPatterns.appendChild(list);
+  tdPatterns.appendChild(addBtn);
   tdColor.appendChild(selColor);
   tdActions.appendChild(btnRemove);
 
-  tr.appendChild(tdPattern);
   tr.appendChild(tdTitle);
+  tr.appendChild(tdPatterns);
   tr.appendChild(tdColor);
   tr.appendChild(tdActions);
 
@@ -66,11 +89,16 @@ function ruleRow(rule = { pattern: '', title: '', color: 'grey' }) {
 function getRowsData() {
   const rows = Array.from(document.querySelectorAll('#rules-tbody tr'));
   return rows.map(row => {
-    const [ipPattern, ipTitle, selColor] = row.querySelectorAll('input, select');
+    const ipTitle = row.querySelector('td:nth-child(1) input');
+    const list = row.querySelector('.pattern-list');
+    const selColor = row.querySelector('select');
+    const patterns = Array.from(list ? list.querySelectorAll('input[type="text"]') : [])
+      .map(i => (i.value || '').trim())
+      .filter(Boolean);
     return {
-      pattern: (ipPattern.value || '').trim(),
       title: (ipTitle.value || '').trim(),
-      color: selColor.value
+      color: selColor.value,
+      patterns
     };
   });
 }
@@ -112,36 +140,67 @@ async function loadRules() {
   const { groupingRules } = await chrome.storage.sync.get({ groupingRules: [] });
   const tbody = $('#rules-tbody');
   tbody.innerHTML = '';
-  const rules = Array.isArray(groupingRules) ? groupingRules : [];
-  for (const rule of rules) {
-    tbody.appendChild(ruleRow(rule));
-  }
-  if (rules.length === 0) {
-    tbody.appendChild(ruleRow());
+  const data = Array.isArray(groupingRules) ? groupingRules : [];
+  // Detect schema: if has 'patterns', it's the new group schema; otherwise legacy rules
+  if (data.length && Array.isArray(data[0].patterns)) {
+    for (const g of data) {
+      tbody.appendChild(groupRow(g));
+    }
+  } else if (data.length) {
+    // Convert legacy {pattern,title?,color} into grouped rows
+    const byTitle = new Map();
+    for (const r of data) {
+      if (!r || typeof r.pattern !== 'string') continue;
+      const title = (r.title && String(r.title).trim()) || r.pattern;
+      const color = r.color || 'grey';
+      if (!byTitle.has(title)) byTitle.set(title, { title, color, patterns: [] });
+      const g = byTitle.get(title);
+      if (!g.patterns.includes(r.pattern)) g.patterns.push(r.pattern);
+      if (g.color === 'grey' && color !== 'grey') g.color = color;
+    }
+    const groups = Array.from(byTitle.values());
+    for (const g of groups) {
+      tbody.appendChild(groupRow(g));
+    }
+    try {
+      await chrome.storage.sync.set({ groupingRules: groups });
+    } catch {}
+  } else {
+    tbody.appendChild(groupRow());
   }
 }
 
 async function saveRules() {
-  const rules = getRowsData();
+  const groups = getRowsData();
   // Validate
-  for (let i = 0; i < rules.length; i++) {
-    const r = rules[i];
-    if (!isValidPattern(r.pattern)) {
-      showStatus(`Row ${i + 1}: Invalid pattern`, true);
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (!g.title) {
+      showStatus(`Row ${i + 1}: Title is required`, true);
       return;
     }
-    if (!COLORS.includes(r.color)) {
+    if (!COLORS.includes(g.color)) {
       showStatus(`Row ${i + 1}: Invalid color`, true);
       return;
     }
+    if (!g.patterns.length) {
+      showStatus(`Row ${i + 1}: Add at least one pattern`, true);
+      return;
+    }
+    for (let j = 0; j < g.patterns.length; j++) {
+      if (!isValidPattern(g.patterns[j])) {
+        showStatus(`Row ${i + 1}: Invalid pattern "${g.patterns[j]}"`, true);
+        return;
+      }
+    }
   }
-  await chrome.storage.sync.set({ groupingRules: rules });
+  await chrome.storage.sync.set({ groupingRules: groups });
   showStatus('Saved');
 }
 
 function addRuleRow() {
   const tbody = $('#rules-tbody');
-  tbody.appendChild(ruleRow());
+  tbody.appendChild(groupRow());
 }
 
 function applyPrepopulatedRule(pre) {
@@ -149,19 +208,24 @@ function applyPrepopulatedRule(pre) {
   const tbody = $('#rules-tbody');
   const firstRow = tbody.querySelector('tr');
   if (firstRow) {
-    const [ipPattern, ipTitle, selColor] = firstRow.querySelectorAll('input, select');
-    if (ipPattern && !ipPattern.value) {
-      ipPattern.value = pre.pattern || '';
+    const ipTitle = firstRow.querySelector('td:nth-child(1) input');
+    const list = firstRow.querySelector('.pattern-list');
+    const selColor = firstRow.querySelector('select');
+    if (list) {
+      const existing = Array.from(list.querySelectorAll('input[type="text"]')).map(i => (i.value || '').trim());
+      if (!existing.includes(pre.pattern)) {
+        list.appendChild(patternItem(pre.pattern));
+      }
       if (pre.title != null) ipTitle.value = pre.title;
       if (pre.color && COLORS.includes(pre.color)) selColor.value = pre.color;
-      ipPattern.focus();
+      ipTitle.focus();
       return;
     }
   }
-  const row = ruleRow(pre);
+  const row = groupRow({ title: pre.title || '', color: pre.color || 'grey', patterns: [pre.pattern] });
   tbody.insertBefore(row, tbody.firstChild);
-  const ip = row.querySelector('input');
-  if (ip) ip.focus();
+  const ipTitle = row.querySelector('input');
+  if (ipTitle) ipTitle.focus();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

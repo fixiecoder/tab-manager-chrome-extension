@@ -11,19 +11,19 @@
 <body>
   <main class="container">
     <h1>Auto Tab Grouper</h1>
-    <p>Configure host patterns to automatically group tabs.</p>
+    <p>Create groups and add one or more patterns to each group.</p>
 
     <section>
       <div class="actions">
-        <button id="add-rule">Add rule</button>
+        <button id="add-rule">Add group</button>
         <button id="save-rules" class="primary">Save</button>
       </div>
       <table class="rules">
         <thead>
           <tr>
-            <th style="width:40%">Pattern</th>
-            <th style="width:35%">Title (optional)</th>
-            <th style="width:15%">Color</th>
+            <th style="width:28%">Title</th>
+            <th style="width:52%">Patterns</th>
+            <th style="width:10%">Color</th>
             <th style="width:10%"></th>
           </tr>
         </thead>
@@ -31,7 +31,7 @@
       </table>
       <div class="help">
         <p>
-          Matching rules:
+          Patterns:
         </p>
         <ul>
           <li><code>example.com</code> matches only <code>example.com</code> (any path)</li>
