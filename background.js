@@ -241,6 +241,70 @@ async function ensureGroupAtLeft(windowId, title) {
 }
 
 /**
+ * Organize ALL groups in a window to be immediately after pinned tabs,
+ * with no ungrouped tabs in between. Keeps groups ordered by their
+ * first tab's index to preserve relative ordering.
+ * @param {number} windowId
+ */
+async function organizeGroupsInWindow(windowId) {
+  try {
+    if (windowId == null) return;
+    // Read all tabs and derive current order for groups and ungrouped sets
+    const allTabs = await chrome.tabs.query({ windowId });
+    if (!Array.isArray(allTabs) || !allTabs.length) return;
+    // Sort reliably by index
+    allTabs.sort((a, b) => a.index - b.index);
+    const pinnedCount = allTabs.filter(t => t.pinned).length;
+
+    // Determine ordered unique group IDs by first occurrence
+    const seen = new Set();
+    const orderedGroupIds = [];
+    for (const t of allTabs) {
+      if (t.pinned) continue; // pinned are outside our layout
+      const gid = typeof t.groupId === 'number' ? t.groupId : -1;
+      if (gid >= 0 && !seen.has(gid)) {
+        seen.add(gid);
+        orderedGroupIds.push(gid);
+      }
+    }
+
+    // Determine ordered ungrouped tabs (exclude pinned)
+    const orderedUngroupedTabIds = [];
+    for (const t of allTabs) {
+      if (t.pinned) continue;
+      const gid = typeof t.groupId === 'number' ? t.groupId : -1;
+      if (gid === -1) orderedUngroupedTabIds.push(t.id);
+    }
+
+    // If nothing to organize, return
+    if (!orderedGroupIds.length && !orderedUngroupedTabIds.length) return;
+
+    // Phase 1: move groups contiguously right after pinned, preserving their relative order
+    let targetIndex = pinnedCount;
+    for (const gid of orderedGroupIds) {
+      try {
+        await chrome.tabGroups.move(gid, { index: targetIndex });
+      } catch {
+        // ignore and continue
+      }
+      targetIndex += 1;
+    }
+
+    // Phase 2: move ungrouped tabs contiguously after the groups, preserving their order
+    for (const tabId of orderedUngroupedTabIds) {
+      try {
+        await chrome.tabs.move(tabId, { index: targetIndex });
+      } catch {
+        // ignore and continue
+      }
+      targetIndex += 1;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Ensure the given tab is in the appropriate group for the rule.
  * Reuses existing group with the same title in the same window, otherwise creates a new one.
  * @param {chrome.tabs.Tab} tab
@@ -259,8 +323,8 @@ async function ensureTabInGroup(tab, groupInfo) {
     await chrome.tabs.group({ tabIds: [tab.id], groupId: existing.id });
     // Best-effort dedupe in case duplicates exist
     await dedupeGroups(tab.windowId, title, color);
-    // Keep groups to the left of ungrouped tabs
-    await ensureGroupAtLeft(tab.windowId, title);
+    // Keep groups to the left of ungrouped tabs, preserving order
+    await organizeGroupsInWindow(tab.windowId);
     return existing.id;
   }
 
@@ -269,8 +333,8 @@ async function ensureTabInGroup(tab, groupInfo) {
   await chrome.tabGroups.update(groupId, { title, color });
   // Immediately try to dedupe after setting title/color (handles race where multiple tabs create simultaneously)
   await dedupeGroups(tab.windowId, title, color);
-  // Keep groups to the left of ungrouped tabs
-  await ensureGroupAtLeft(tab.windowId, title);
+  // Keep groups to the left of ungrouped tabs, preserving order
+  await organizeGroupsInWindow(tab.windowId);
   return groupId;
 }
 
@@ -299,8 +363,25 @@ async function processTab(tab) {
   const path = url ? getPathFromUrl(url) : null;
   const groups = await getGroups();
   const match = findMatchingGroup(host, path || '/', groups);
-  if (!match) return;
-  await ensureTabInGroup(tab, match);
+  if (match) {
+    await ensureTabInGroup(tab, match);
+    return;
+  }
+  // If no match, ungroup the tab if it currently belongs to one of our managed groups
+  try {
+    if (typeof tab.groupId === 'number' && tab.groupId >= 0) {
+      const currentGroup = await chrome.tabGroups.get(tab.groupId);
+      const managedTitles = new Set(groups.map(g => g.title));
+      if (currentGroup && managedTitles.has(currentGroup.title)) {
+        await chrome.tabs.ungroup(tab.id);
+        if (tab.windowId != null) {
+          await organizeGroupsInWindow(tab.windowId);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -339,12 +420,24 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 chrome.tabs.onCreated.addListener((tab) => {
   // URL can be missing at creation; we'll also handle onUpdated
   processTab(tab);
+  if (tab && tab.windowId != null) {
+    organizeGroupsInWindow(tab.windowId);
+  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Process when URL changes or tab load completes
   if (changeInfo.url || changeInfo.status === 'complete') {
     processTabId(tabId);
+    try {
+      if (tab && tab.windowId != null) {
+        organizeGroupsInWindow(tab.windowId);
+      } else {
+        chrome.tabs.get(tabId).then(t => {
+          if (t && t.windowId != null) organizeGroupsInWindow(t.windowId);
+        }).catch(() => {});
+      }
+    } catch {}
   }
 });
 
@@ -352,14 +445,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabGroups.onCreated.addListener((group) => {
   if (group && group.title && group.windowId != null) {
     dedupeGroups(group.windowId, group.title, group.color);
-    ensureGroupAtLeft(group.windowId, group.title);
+    organizeGroupsInWindow(group.windowId);
   }
 });
 
 chrome.tabGroups.onUpdated.addListener((group) => {
   if (group && group.title && group.windowId != null) {
     dedupeGroups(group.windowId, group.title, group.color);
-    ensureGroupAtLeft(group.windowId, group.title);
+    organizeGroupsInWindow(group.windowId);
   }
 });
 

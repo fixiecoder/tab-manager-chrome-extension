@@ -206,23 +206,12 @@ function addRuleRow() {
 function applyPrepopulatedRule(pre) {
   if (!pre || !pre.pattern) return;
   const tbody = $('#rules-tbody');
-  const firstRow = tbody.querySelector('tr');
-  if (firstRow) {
-    const ipTitle = firstRow.querySelector('td:nth-child(1) input');
-    const list = firstRow.querySelector('.pattern-list');
-    const selColor = firstRow.querySelector('select');
-    if (list) {
-      const existing = Array.from(list.querySelectorAll('input[type="text"]')).map(i => (i.value || '').trim());
-      if (!existing.includes(pre.pattern)) {
-        list.appendChild(patternItem(pre.pattern));
-      }
-      if (pre.title != null) ipTitle.value = pre.title;
-      if (pre.color && COLORS.includes(pre.color)) selColor.value = pre.color;
-      ipTitle.focus();
-      return;
-    }
-  }
-  const row = groupRow({ title: pre.title || '', color: pre.color || 'grey', patterns: [pre.pattern] });
+  // Always create a new group row at the top rather than editing existing rows
+  const row = groupRow({
+    title: (pre.title && String(pre.title).trim()) || pre.pattern,
+    color: (pre.color && COLORS.includes(pre.color)) ? pre.color : 'grey',
+    patterns: [pre.pattern]
+  });
   tbody.insertBefore(row, tbody.firstChild);
   const ipTitle = row.querySelector('input');
   if (ipTitle) ipTitle.focus();
