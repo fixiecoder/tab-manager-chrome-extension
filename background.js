@@ -15,6 +15,8 @@ const ALLOWED_GROUP_COLORS = new Set([
 
 // Prevent re-entrant window organization loops
 const organizingWindows = new Set();
+// Track pending auto-close timeouts per tab
+const autoCloseTimers = new Map();
 
 /**
  * Read grouping rules from storage.sync.
@@ -61,6 +63,22 @@ async function getGroups() {
     // ignore write errors
   }
   return groups;
+}
+
+/**
+ * Read auto-close URL patterns from storage.sync.
+ * @returns {Promise<string[]>}
+ */
+async function getAutoClosePatterns() {
+	try {
+		const { autoClosePatterns } = await chrome.storage.sync.get({ autoClosePatterns: [] });
+		if (!Array.isArray(autoClosePatterns)) return [];
+		return autoClosePatterns
+			.map(p => (typeof p === 'string' ? p.trim() : ''))
+			.filter(Boolean);
+	} catch {
+		return [];
+	}
 }
 
 /**
@@ -186,6 +204,51 @@ function findMatchingGroup(host, pathname, groups) {
     }
   }
   return null;
+}
+
+/**
+ * Decide whether a tab should be auto-closed and schedule if so.
+ * Schedules a 1s timeout, and revalidates the match before closing.
+ * @param {chrome.tabs.Tab} tab
+ */
+async function maybeScheduleAutoClose(tab) {
+	try {
+		if (!tab || tab.id == null) return;
+		if (tab.pinned) return;
+		const url = tab.url || tab.pendingUrl;
+		const host = url ? getHostFromUrl(url) : null;
+		if (!host) return; // only http/https
+		const path = url ? getPathFromUrl(url) : '/';
+		const patterns = await getAutoClosePatterns();
+		if (!patterns.length) return;
+		const matched = patterns.some(p => typeof p === 'string' && patternMatchesUrl(p, host, path || '/'));
+		if (!matched) return;
+
+		// Clear any existing timer for this tab
+		if (autoCloseTimers.has(tab.id)) {
+			clearTimeout(autoCloseTimers.get(tab.id));
+		}
+		const tId = setTimeout(async () => {
+			autoCloseTimers.delete(tab.id);
+			try {
+				const fresh = await chrome.tabs.get(tab.id);
+				if (!fresh || fresh.pinned) return;
+				const fUrl = fresh.url || fresh.pendingUrl;
+				const fHost = fUrl ? getHostFromUrl(fUrl) : null;
+				const fPath = fUrl ? getPathFromUrl(fUrl) : '/';
+				const latest = await getAutoClosePatterns();
+				const stillMatch = fHost && latest.some(p => typeof p === 'string' && patternMatchesUrl(p, fHost, fPath || '/'));
+				if (stillMatch) {
+					await chrome.tabs.remove(tab.id);
+				}
+			} catch {
+				// ignore (tab may be gone)
+			}
+		}, 1000);
+		autoCloseTimers.set(tab.id, tId);
+	} catch {
+		// ignore
+	}
 }
 
 /**
@@ -445,6 +508,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     // Re-sweep to apply new rules
     sweepAllTabs();
   }
+	// No immediate action needed for autoClosePatterns; new events will read latest values
 });
 
 // Tab events
@@ -454,6 +518,7 @@ chrome.tabs.onCreated.addListener((tab) => {
   if (tab && tab.windowId != null) {
     organizeGroupsInWindow(tab.windowId);
   }
+	maybeScheduleAutoClose(tab);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -469,7 +534,22 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         }).catch(() => {});
       }
     } catch {}
+		// Attempt to schedule auto-close when URL changes or load completes
+		if (tab) {
+			maybeScheduleAutoClose(tab);
+		} else {
+			chrome.tabs.get(tabId).then(t => maybeScheduleAutoClose(t)).catch(() => {});
+		}
   }
+});
+
+// Cleanup timers when tabs are removed
+chrome.tabs.onRemoved.addListener((tabId) => {
+	const t = autoCloseTimers.get(tabId);
+	if (t) {
+		clearTimeout(t);
+		autoCloseTimers.delete(tabId);
+	}
 });
 
 // Group events: dedupe when groups are created or updated with titles

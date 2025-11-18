@@ -45,6 +45,19 @@
       </div>
     </section>
 
+    <section>
+      <h2>Auto-close tabs (1s)</h2>
+      <p>Add URL patterns. Matching tabs will auto close after 1 second.</p>
+      <div id="autoclose-list" class="pattern-list"></div>
+      <div class="actions">
+        <button id="autoclose-add">Add pattern</button>
+        <button id="save-autoclose" class="primary">Save</button>
+      </div>
+      <div class="help">
+        <p>Patterns use the same format as above (host with optional path, <code>*</code> wildcard allowed).</p>
+      </div>
+    </section>
+
     <p id="status" aria-live="polite"></p>
   </main>
   <script src="options.js"></script>

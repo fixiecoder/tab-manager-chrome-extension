@@ -170,6 +170,37 @@ async function loadRules() {
   }
 }
 
+async function loadAutoClosePatterns() {
+	const { autoClosePatterns } = await chrome.storage.sync.get({ autoClosePatterns: [] });
+	const list = $('#autoclose-list');
+	if (!list) return;
+	list.innerHTML = '';
+	const patterns = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+	if (patterns.length === 0) {
+		list.appendChild(patternItem(''));
+		return;
+	}
+	for (const p of patterns) {
+		list.appendChild(patternItem(p));
+	}
+}
+
+function addAutoClosePattern() {
+	const list = $('#autoclose-list');
+	if (!list) return;
+	list.appendChild(patternItem(''));
+	const lastInput = list.querySelector('.pattern-item:last-child input');
+	if (lastInput) lastInput.focus();
+}
+
+function getAutoClosePatternsFromUI() {
+	const list = $('#autoclose-list');
+	if (!list) return [];
+	return Array.from(list.querySelectorAll('input[type="text"]'))
+		.map(i => (i.value || '').trim())
+		.filter(Boolean);
+}
+
 async function saveRules() {
   const groups = getRowsData();
   // Validate
@@ -194,7 +225,15 @@ async function saveRules() {
       }
     }
   }
-  await chrome.storage.sync.set({ groupingRules: groups });
+	// Validate auto-close patterns
+	const autoClosePatterns = getAutoClosePatternsFromUI();
+	for (let k = 0; k < autoClosePatterns.length; k++) {
+		if (!isValidPattern(autoClosePatterns[k])) {
+			showStatus(`Auto-close: Invalid pattern "${autoClosePatterns[k]}"`, true);
+			return;
+		}
+	}
+	await chrome.storage.sync.set({ groupingRules: groups, autoClosePatterns });
   showStatus('Saved');
 }
 
@@ -220,7 +259,12 @@ function applyPrepopulatedRule(pre) {
 document.addEventListener('DOMContentLoaded', async () => {
   $('#add-rule').addEventListener('click', addRuleRow);
   $('#save-rules').addEventListener('click', saveRules);
+	const addAutoBtn = $('#autoclose-add');
+	if (addAutoBtn) addAutoBtn.addEventListener('click', addAutoClosePattern);
+	const saveAutoBtn = $('#save-autoclose');
+	if (saveAutoBtn) saveAutoBtn.addEventListener('click', saveRules);
   await loadRules();
+	await loadAutoClosePatterns();
   try {
     const { prepopulateRule } = await chrome.storage.local.get({ prepopulateRule: null });
     if (prepopulateRule) {
