@@ -64,18 +64,29 @@ async function getGroups() {
   }
   return groups;
 }
-
 /**
- * Read auto-close URL patterns from storage.sync.
- * @returns {Promise<string[]>}
+ * Read auto-close rules from storage.sync.
+ * Supports legacy string array; normalizes to { pattern, delaySeconds }.
+ * @returns {Promise<Array<{pattern:string, delaySeconds:number}>>}
  */
-async function getAutoClosePatterns() {
+async function getAutoCloseRules() {
 	try {
 		const { autoClosePatterns } = await chrome.storage.sync.get({ autoClosePatterns: [] });
-		if (!Array.isArray(autoClosePatterns)) return [];
-		return autoClosePatterns
-			.map(p => (typeof p === 'string' ? p.trim() : ''))
-			.filter(Boolean);
+		const raw = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+		const out = [];
+		for (const it of raw) {
+			if (typeof it === 'string') {
+				const p = it.trim();
+				if (p) out.push({ pattern: p, delaySeconds: 1 });
+			} else if (it && typeof it.pattern === 'string') {
+				let d = Number(it.delaySeconds ?? it.delay);
+				if (!Number.isFinite(d)) d = 1;
+				d = Math.min(10, Math.max(1, Math.floor(d)));
+				const p = it.pattern.trim();
+				if (p) out.push({ pattern: p, delaySeconds: d });
+			}
+		}
+		return out;
 	} catch {
 		return [];
 	}
@@ -219,10 +230,10 @@ async function maybeScheduleAutoClose(tab) {
 		const host = url ? getHostFromUrl(url) : null;
 		if (!host) return; // only http/https
 		const path = url ? getPathFromUrl(url) : '/';
-		const patterns = await getAutoClosePatterns();
-		if (!patterns.length) return;
-		const matched = patterns.some(p => typeof p === 'string' && patternMatchesUrl(p, host, path || '/'));
-		if (!matched) return;
+		const rules = await getAutoCloseRules();
+		if (!rules.length) return;
+		const match = rules.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, host, path || '/'));
+		if (!match) return;
 
 		// Clear any existing timer for this tab
 		if (autoCloseTimers.has(tab.id)) {
@@ -236,15 +247,16 @@ async function maybeScheduleAutoClose(tab) {
 				const fUrl = fresh.url || fresh.pendingUrl;
 				const fHost = fUrl ? getHostFromUrl(fUrl) : null;
 				const fPath = fUrl ? getPathFromUrl(fUrl) : '/';
-				const latest = await getAutoClosePatterns();
-				const stillMatch = fHost && latest.some(p => typeof p === 'string' && patternMatchesUrl(p, fHost, fPath || '/'));
+				const latest = await getAutoCloseRules();
+				const stillRule = fHost && latest.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, fHost, fPath || '/'));
+				const stillMatch = Boolean(stillRule);
 				if (stillMatch) {
 					await chrome.tabs.remove(tab.id);
 				}
 			} catch {
 				// ignore (tab may be gone)
 			}
-		}, 1000);
+		}, Math.max(1000, (Number(match.delaySeconds) || 1) * 1000));
 		autoCloseTimers.set(tab.id, tId);
 	} catch {
 		// ignore

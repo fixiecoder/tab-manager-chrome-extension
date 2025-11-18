@@ -11,6 +11,8 @@
 <body>
   <main class="container">
     <h1>Auto Tab Grouper</h1>
+    <p id="dirty-indicator" class="unsaved" aria-live="polite" aria-atomic="true" style="display:none">Unsaved changes
+    </p>
     <p>Create groups and add one or more patterns to each group.</p>
 
     <section>
@@ -47,7 +49,7 @@
 
     <section>
       <h2>Auto-close tabs (1s)</h2>
-      <p>Add URL patterns. Matching tabs will auto close after 1 second.</p>
+      <p>Add URL patterns. Matching tabs will auto close after selected delay (1–10s).</p>
       <div id="autoclose-list" class="pattern-list"></div>
       <div class="actions">
         <button id="autoclose-add">Add pattern</button>

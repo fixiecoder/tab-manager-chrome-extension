@@ -30,6 +30,17 @@ function colorSelect(value = 'grey') {
   return select;
 }
 
+function delaySelect(value = 1) {
+	const select = el('select', { 'aria-label': 'Delay seconds', class: 'delay-select' });
+	const normalized = Math.min(10, Math.max(1, Math.floor(Number(value) || 1)));
+	for (let i = 1; i <= 10; i++) {
+		const opt = el('option', { value: String(i), text: String(i) });
+		if (i === normalized) opt.selected = true;
+		select.appendChild(opt);
+	}
+	return select;
+}
+
 function patternItem(initial = '') {
   const wrap = el('div', { class: 'pattern-item' });
   const input = el('input', { type: 'text', placeholder: 'example.com, *.example.com, example.com/docs/*' });
@@ -37,10 +48,27 @@ function patternItem(initial = '') {
   const removeBtn = el('button', { type: 'button', class: 'tiny danger' }, 'Remove');
   removeBtn.addEventListener('click', () => {
     wrap.remove();
+    if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
   wrap.appendChild(input);
   wrap.appendChild(removeBtn);
   return wrap;
+}
+
+function autoClosePatternItem(initial = { pattern: '', delaySeconds: 1 }) {
+	const wrap = el('div', { class: 'pattern-item' });
+	const input = el('input', { type: 'text', placeholder: 'example.com, *.example.com, example.com/docs/*' });
+	input.value = (initial && initial.pattern) ? initial.pattern : '';
+	const selDelay = delaySelect((initial && initial.delaySeconds) ? initial.delaySeconds : 1);
+	const removeBtn = el('button', { type: 'button', class: 'tiny danger' }, 'Remove');
+	removeBtn.addEventListener('click', () => {
+		wrap.remove();
+		if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
+	});
+	wrap.appendChild(input);
+	wrap.appendChild(selDelay);
+	wrap.appendChild(removeBtn);
+	return wrap;
 }
 
 function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
@@ -63,6 +91,7 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
     list.appendChild(patternItem(''));
     const lastInput = list.querySelector('.pattern-item:last-child input');
     if (lastInput) lastInput.focus();
+    if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
 
   const selColor = colorSelect(group.color || 'grey');
@@ -70,6 +99,7 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
   const btnRemove = el('button', { class: 'danger', type: 'button' }, 'Remove');
   btnRemove.addEventListener('click', () => {
     tr.remove();
+    if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
 
   tdTitle.appendChild(ipTitle);
@@ -175,30 +205,99 @@ async function loadAutoClosePatterns() {
 	const list = $('#autoclose-list');
 	if (!list) return;
 	list.innerHTML = '';
-	const patterns = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
-	if (patterns.length === 0) {
-		list.appendChild(patternItem(''));
+	const raw = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+	const items = [];
+	for (const it of raw) {
+		if (typeof it === 'string') {
+			items.push({ pattern: it, delaySeconds: 1 });
+		} else if (it && typeof it.pattern === 'string') {
+			let d = Number(it.delaySeconds ?? it.delay);
+			if (!Number.isFinite(d)) d = 1;
+			d = Math.min(10, Math.max(1, Math.floor(d)));
+			items.push({ pattern: it.pattern, delaySeconds: d });
+		}
+	}
+	if (items.length === 0) {
+		list.appendChild(autoClosePatternItem({ pattern: '', delaySeconds: 1 }));
 		return;
 	}
-	for (const p of patterns) {
-		list.appendChild(patternItem(p));
+	for (const it of items) {
+		list.appendChild(autoClosePatternItem(it));
 	}
+}
+
+// ===== Unsaved changes indicator tracking =====
+let lastSavedGroupsJson = '[]';
+let lastSavedAutoJson = '[]';
+
+function serializeForCompare(obj) {
+	try {
+		return JSON.stringify(obj);
+	} catch {
+		return '';
+	}
+}
+
+function setUnsavedVisible(visible) {
+	const elInd = $('#dirty-indicator');
+	if (!elInd) return;
+	elInd.style.display = visible ? '' : 'none';
+}
+
+function updateUnsavedIndicator() {
+	const currentGroupsJson = serializeForCompare(getRowsData());
+	const currentAutoJson = serializeForCompare(getAutoClosePatternsFromUI());
+	const dirty = (currentGroupsJson !== lastSavedGroupsJson) || (currentAutoJson !== lastSavedAutoJson);
+	setUnsavedVisible(dirty);
+}
+
+async function refreshSavedSnapshotsFromStorage() {
+	try {
+		const { groupingRules, autoClosePatterns } = await chrome.storage.sync.get({ groupingRules: [], autoClosePatterns: [] });
+		const autoNormalized = [];
+		const rawAuto = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+		for (const it of rawAuto) {
+			if (typeof it === 'string') {
+				autoNormalized.push({ pattern: it, delaySeconds: 1 });
+			} else if (it && typeof it.pattern === 'string') {
+				let d = Number(it.delaySeconds ?? it.delay);
+				if (!Number.isFinite(d)) d = 1;
+				d = Math.min(10, Math.max(1, Math.floor(d)));
+				autoNormalized.push({ pattern: it.pattern, delaySeconds: d });
+			}
+		}
+		lastSavedGroupsJson = serializeForCompare(Array.isArray(groupingRules) ? groupingRules : []);
+		lastSavedAutoJson = serializeForCompare(autoNormalized);
+	} catch {
+		lastSavedGroupsJson = '[]';
+		lastSavedAutoJson = '[]';
+	}
+	updateUnsavedIndicator();
 }
 
 function addAutoClosePattern() {
 	const list = $('#autoclose-list');
 	if (!list) return;
-	list.appendChild(patternItem(''));
+	list.appendChild(autoClosePatternItem({ pattern: '', delaySeconds: 1 }));
 	const lastInput = list.querySelector('.pattern-item:last-child input');
 	if (lastInput) lastInput.focus();
+	updateUnsavedIndicator();
 }
 
 function getAutoClosePatternsFromUI() {
 	const list = $('#autoclose-list');
 	if (!list) return [];
-	return Array.from(list.querySelectorAll('input[type="text"]'))
-		.map(i => (i.value || '').trim())
-		.filter(Boolean);
+	const rows = Array.from(list.querySelectorAll('.pattern-item'));
+	const out = [];
+	for (const row of rows) {
+		const ip = row.querySelector('input[type="text"]');
+		const sel = row.querySelector('select');
+		const pattern = (ip && ip.value ? ip.value.trim() : '');
+		if (!pattern) continue;
+		const delaySeconds = Math.min(10, Math.max(1, Math.floor(Number(sel && sel.value ? sel.value : 1))));
+		out.push({ pattern, delaySeconds });
+	}
+	return out;
 }
 
 async function saveRules() {
@@ -228,18 +327,28 @@ async function saveRules() {
 	// Validate auto-close patterns
 	const autoClosePatterns = getAutoClosePatternsFromUI();
 	for (let k = 0; k < autoClosePatterns.length; k++) {
-		if (!isValidPattern(autoClosePatterns[k])) {
-			showStatus(`Auto-close: Invalid pattern "${autoClosePatterns[k]}"`, true);
+		const it = autoClosePatterns[k];
+		if (!isValidPattern(it.pattern)) {
+			showStatus(`Auto-close: Invalid pattern "${it.pattern}"`, true);
+			return;
+		}
+		if (!(Number.isFinite(it.delaySeconds) && it.delaySeconds >= 1 && it.delaySeconds <= 10)) {
+			showStatus(`Auto-close: Invalid delay "${it.delaySeconds}" for "${it.pattern}"`, true);
 			return;
 		}
 	}
 	await chrome.storage.sync.set({ groupingRules: groups, autoClosePatterns });
   showStatus('Saved');
+  // Update snapshots and indicator
+  lastSavedGroupsJson = serializeForCompare(groups);
+  lastSavedAutoJson = serializeForCompare(autoClosePatterns);
+  updateUnsavedIndicator();
 }
 
 function addRuleRow() {
   const tbody = $('#rules-tbody');
   tbody.appendChild(groupRow());
+  updateUnsavedIndicator();
 }
 
 function applyPrepopulatedRule(pre) {
@@ -265,6 +374,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 	if (saveAutoBtn) saveAutoBtn.addEventListener('click', saveRules);
   await loadRules();
 	await loadAutoClosePatterns();
+  // Global listeners to detect unsaved changes
+  document.addEventListener('input', updateUnsavedIndicator, true);
+  document.addEventListener('change', updateUnsavedIndicator, true);
+  await refreshSavedSnapshotsFromStorage();
   try {
     const { prepopulateRule } = await chrome.storage.local.get({ prepopulateRule: null });
     if (prepopulateRule) {
