@@ -73,26 +73,26 @@ async function getGroups() {
  * @returns {Promise<Array<{pattern:string, delaySeconds:number}>>}
  */
 async function getAutoCloseRules() {
-	try {
-		const { autoClosePatterns } = await chrome.storage.sync.get({ autoClosePatterns: [] });
-		const raw = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
-		const out = [];
-		for (const it of raw) {
-			if (typeof it === 'string') {
-				const p = it.trim();
-				if (p) out.push({ pattern: p, delaySeconds: 1 });
-			} else if (it && typeof it.pattern === 'string') {
-				let d = Number(it.delaySeconds ?? it.delay);
-				if (!Number.isFinite(d)) d = 1;
-				d = Math.min(10, Math.max(1, Math.floor(d)));
-				const p = it.pattern.trim();
-				if (p) out.push({ pattern: p, delaySeconds: d });
-			}
-		}
-		return out;
-	} catch {
-		return [];
-	}
+  try {
+    const { autoClosePatterns } = await chrome.storage.sync.get({ autoClosePatterns: [] });
+    const raw = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+    const out = [];
+    for (const it of raw) {
+      if (typeof it === 'string') {
+        const p = it.trim();
+        if (p) out.push({ pattern: p, delaySeconds: 1 });
+      } else if (it && typeof it.pattern === 'string') {
+        let d = Number(it.delaySeconds ?? it.delay);
+        if (!Number.isFinite(d)) d = 1;
+        d = Math.min(10, Math.max(1, Math.floor(d)));
+        const p = it.pattern.trim();
+        if (p) out.push({ pattern: p, delaySeconds: d });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -226,44 +226,44 @@ function findMatchingGroup(host, pathname, groups) {
  * @param {chrome.tabs.Tab} tab
  */
 async function maybeScheduleAutoClose(tab) {
-	try {
-		if (!tab || tab.id == null) return;
-		if (tab.pinned) return;
-		const url = tab.url || tab.pendingUrl;
-		const host = url ? getHostFromUrl(url) : null;
-		if (!host) return; // only http/https
-		const path = url ? getPathFromUrl(url) : '/';
-		const rules = await getAutoCloseRules();
-		if (!rules.length) return;
-		const match = rules.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, host, path || '/'));
-		if (!match) return;
+  try {
+    if (!tab || tab.id == null) return;
+    if (tab.pinned) return;
+    const url = tab.url || tab.pendingUrl;
+    const host = url ? getHostFromUrl(url) : null;
+    if (!host) return; // only http/https
+    const path = url ? getPathFromUrl(url) : '/';
+    const rules = await getAutoCloseRules();
+    if (!rules.length) return;
+    const match = rules.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, host, path || '/'));
+    if (!match) return;
 
-		// Clear any existing timer for this tab
-		if (autoCloseTimers.has(tab.id)) {
-			clearTimeout(autoCloseTimers.get(tab.id));
-		}
-		const tId = setTimeout(async () => {
-			autoCloseTimers.delete(tab.id);
-			try {
-				const fresh = await chrome.tabs.get(tab.id);
-				if (!fresh || fresh.pinned) return;
-				const fUrl = fresh.url || fresh.pendingUrl;
-				const fHost = fUrl ? getHostFromUrl(fUrl) : null;
-				const fPath = fUrl ? getPathFromUrl(fUrl) : '/';
-				const latest = await getAutoCloseRules();
-				const stillRule = fHost && latest.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, fHost, fPath || '/'));
-				const stillMatch = Boolean(stillRule);
-				if (stillMatch) {
-					await chrome.tabs.remove(tab.id);
-				}
-			} catch {
-				// ignore (tab may be gone)
-			}
-		}, Math.max(1000, (Number(match.delaySeconds) || 1) * 1000));
-		autoCloseTimers.set(tab.id, tId);
-	} catch {
-		// ignore
-	}
+    // Clear any existing timer for this tab
+    if (autoCloseTimers.has(tab.id)) {
+      clearTimeout(autoCloseTimers.get(tab.id));
+    }
+    const tId = setTimeout(async () => {
+      autoCloseTimers.delete(tab.id);
+      try {
+        const fresh = await chrome.tabs.get(tab.id);
+        if (!fresh || fresh.pinned) return;
+        const fUrl = fresh.url || fresh.pendingUrl;
+        const fHost = fUrl ? getHostFromUrl(fUrl) : null;
+        const fPath = fUrl ? getPathFromUrl(fUrl) : '/';
+        const latest = await getAutoCloseRules();
+        const stillRule = fHost && latest.find(r => typeof r.pattern === 'string' && patternMatchesUrl(r.pattern, fHost, fPath || '/'));
+        const stillMatch = Boolean(stillRule);
+        if (stillMatch) {
+          await chrome.tabs.remove(tab.id);
+        }
+      } catch {
+        // ignore (tab may be gone)
+      }
+    }, Math.max(1000, (Number(match.delaySeconds) || 1) * 1000));
+    autoCloseTimers.set(tab.id, tId);
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -343,7 +343,7 @@ async function organizeWindow(windowId) {
     for (const group of orderedGroups) {
       // Move the group to the current index
       await chrome.tabGroups.move(group.id, { index: currentIndex });
-      
+
       // Calculate how many tabs are in this group to advance the index
       // We can't just count from our initial query because things might have shifted,
       // but for the purpose of stacking, we can query the group's tabs.
@@ -401,24 +401,24 @@ async function ensureTabInGroup(tab, groupInfo) {
   // Find existing group by title in the same window
   const groups = await chrome.tabGroups.query({ windowId: tab.windowId });
   const existing = groups.find(g => g.title === title);
-  
+
   if (existing) {
     if (tab.groupId !== existing.id) {
       await chrome.tabs.group({ tabIds: [tab.id], groupId: existing.id });
     }
     // Ensure color/title match (in case it was just created or changed)
     if (existing.color !== color) {
-        await chrome.tabGroups.update(existing.id, { color });
+      await chrome.tabGroups.update(existing.id, { color });
     }
   } else {
     // Create new group
     const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
     await chrome.tabGroups.update(groupId, { title, color });
   }
-  
+
   // Dedupe just in case
   await dedupeGroups(tab.windowId, title, color);
-  
+
   // Trigger organization
   scheduleOrganizeWindow(tab.windowId);
 }
@@ -446,10 +446,10 @@ async function processTab(tab) {
 
   const url = tab.url || tab.pendingUrl;
   const host = url ? getHostFromUrl(url) : null;
-  
+
   // If no host (e.g. chrome://), we might still need to ungroup if it was previously grouped
   // But for now, let's just check if it matches any rule.
-  
+
   const groups = await getGroups();
   const path = url ? getPathFromUrl(url) : null;
   const match = host ? findMatchingGroup(host, path || '/', groups) : null;
@@ -470,8 +470,8 @@ async function processTab(tab) {
         // Let's assume we only ungroup if it matches a managed group title.
         const managedTitles = new Set(groups.map(g => g.title));
         if (currentGroup && managedTitles.has(currentGroup.title)) {
-           await chrome.tabs.ungroup(tab.id);
-           scheduleOrganizeWindow(tab.windowId);
+          await chrome.tabs.ungroup(tab.id);
+          scheduleOrganizeWindow(tab.windowId);
         }
       } catch (e) {
         // Group might not exist
@@ -524,15 +524,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.status === 'complete') {
     processTabId(tabId);
     if (tab) {
-        maybeScheduleAutoClose(tab);
+      maybeScheduleAutoClose(tab);
     }
   }
 });
 
 // When a tab is attached to a window (e.g. moved between windows)
 chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
-    processTabId(tabId);
-    scheduleOrganizeWindow(attachInfo.windowId);
+  processTabId(tabId);
+  scheduleOrganizeWindow(attachInfo.windowId);
 });
 
 // When a tab is moved within a window, we might need to re-enforce order
@@ -544,24 +544,24 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 // Requirement 1: "All tab groups should be to the left of ungrouped tabs."
 // So yes, we should enforce this.
 chrome.tabs.onMoved.addListener((tabId, moveInfo) => {
-    scheduleOrganizeWindow(moveInfo.windowId);
+  scheduleOrganizeWindow(moveInfo.windowId);
 });
 
 // When a tab is detached, organize the old window
 chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
-    scheduleOrganizeWindow(detachInfo.oldWindowId);
+  scheduleOrganizeWindow(detachInfo.oldWindowId);
 });
 
 // When a tab is removed
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-	const t = autoCloseTimers.get(tabId);
-	if (t) {
-		clearTimeout(t);
-		autoCloseTimers.delete(tabId);
-	}
-    if (!removeInfo.isWindowClosing) {
-        scheduleOrganizeWindow(removeInfo.windowId);
-    }
+  const t = autoCloseTimers.get(tabId);
+  if (t) {
+    clearTimeout(t);
+    autoCloseTimers.delete(tabId);
+  }
+  if (!removeInfo.isWindowClosing) {
+    scheduleOrganizeWindow(removeInfo.windowId);
+  }
 });
 
 // Group events
@@ -575,34 +575,50 @@ chrome.tabGroups.onUpdated.addListener((group) => {
   if (group.windowId != null) {
     // If title changed, we might need to dedupe
     if (group.title) {
-        dedupeGroups(group.windowId, group.title, group.color);
+      dedupeGroups(group.windowId, group.title, group.color);
     }
     scheduleOrganizeWindow(group.windowId);
   }
 });
 
 chrome.tabGroups.onMoved.addListener((group) => {
-    // If user moves a group, we should respect the new order of groups.
-    // Our organizeWindow logic respects the current order of groups (by firstIndex).
-    // So we just need to make sure ungrouped tabs are still to the right.
-    if (group.windowId != null) {
-        scheduleOrganizeWindow(group.windowId);
-    }
+  // If user moves a group, we should respect the new order of groups.
+  // Our organizeWindow logic respects the current order of groups (by firstIndex).
+  // So we just need to make sure ungrouped tabs are still to the right.
+  if (group.windowId != null) {
+    scheduleOrganizeWindow(group.windowId);
+  }
 });
 
 // Keyboard command: open options with prepopulated rule from active tab
 chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== 'open-rule-creator') return;
-  try {
-    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const url = active && (active.url || active.pendingUrl);
-    const host = url ? getHostFromUrl(url) : null;
-    const prepopulateRule = host ? { pattern: host, color: 'grey', title: '' } : null;
-    if (prepopulateRule) {
-      await chrome.storage.local.set({ prepopulateRule });
+  if (command === 'open-rule-creator') {
+    try {
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const url = active && (active.url || active.pendingUrl);
+      const host = url ? getHostFromUrl(url) : null;
+      const prepopulateRule = host ? { pattern: host, color: 'grey', title: '' } : null;
+      if (prepopulateRule) {
+        await chrome.storage.local.set({ prepopulateRule });
+      }
+      await chrome.runtime.openOptionsPage();
+    } catch {
+      chrome.runtime.openOptionsPage();
     }
-    await chrome.runtime.openOptionsPage();
-  } catch {
-    chrome.runtime.openOptionsPage();
+  } else if (command === 'collapse-inactive-groups') {
+    try {
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!active) return;
+
+      const groups = await chrome.tabGroups.query({ windowId: active.windowId });
+      for (const group of groups) {
+        const shouldBeCollapsed = (group.id !== active.groupId);
+        if (group.collapsed !== shouldBeCollapsed) {
+          await chrome.tabGroups.update(group.id, { collapsed: shouldBeCollapsed });
+        }
+      }
+    } catch (e) {
+      console.error('Error collapsing groups:', e);
+    }
   }
 });

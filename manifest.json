@@ -3,7 +3,11 @@
   "name": "Auto Tab Grouper by Domain",
   "version": "0.1.0",
   "description": "Automatically group tabs by configured domains or wildcard subdomains.",
-  "permissions": ["tabs", "tabGroups", "storage"],
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -16,7 +20,13 @@
         "mac": "Alt+Shift+G"
       },
       "description": "Open options and prepopulate a rule from the active tab"
+    },
+    "collapse-inactive-groups": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "Alt+Shift+C"
+      },
+      "description": "Collapse all groups except the one containing the active tab"
     }
   }
 }
-
