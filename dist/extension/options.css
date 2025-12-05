@@ -149,7 +149,6 @@ button.tiny {
   margin: 6px 0 10px 0;
 }
 
-
 /* Constrain delay dropdown in auto-close section so the URL input has space */
 #autoclose-list .delay-select {
   width: auto;

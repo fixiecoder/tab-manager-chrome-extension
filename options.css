@@ -137,6 +137,17 @@ button.tiny {
   color: var(--danger);
 }
 
+/* Unsaved indicator */
+.unsaved {
+  display: none;
+  color: #8a6d3b;
+  background: #fff3cd;
+  border: 1px solid #ffeeba;
+  padding: 4px 8px;
+  border-radius: 6px;
+  width: fit-content;
+  margin: 6px 0 10px 0;
+}
 
 /* Constrain delay dropdown in auto-close section so the URL input has space */
 #autoclose-list .delay-select {

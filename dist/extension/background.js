@@ -17,6 +17,8 @@ const ALLOWED_GROUP_COLORS = new Set([
 const organizingWindows = new Set();
 // Track pending auto-close timeouts per tab
 const autoCloseTimers = new Map();
+// Debounce timers for window organization
+const organizeTimers = new Map();
 
 /**
  * Read grouping rules from storage.sync.
@@ -64,6 +66,7 @@ async function getGroups() {
   }
   return groups;
 }
+
 /**
  * Read auto-close rules from storage.sync.
  * Supports legacy string array; normalizes to { pattern, delaySeconds }.
@@ -285,7 +288,6 @@ async function dedupeGroups(windowId, title, color) {
       if (tabs.length) {
         await chrome.tabs.group({ tabIds: tabs.map(t => t.id), groupId: primary.id });
       }
-      // After moving all tabs, the duplicate group should be removed automatically
     }
     // Ensure primary has the desired color/title
     const update = { title };
@@ -297,151 +299,128 @@ async function dedupeGroups(windowId, title, color) {
 }
 
 /**
- * Move the group with given title to the far left (after any pinned tabs).
- * Finds the canonical group by title in the window (after any dedupe).
- * Best-effort; errors are ignored.
- * @param {number} windowId
- * @param {string} title
- */
-async function ensureGroupAtLeft(windowId, title) {
-  try {
-    if (windowId == null || !title) return;
-    const groups = await chrome.tabGroups.query({ windowId });
-    const match = groups.find(g => g.title === title);
-    if (!match) return;
-    // Compute index after pinned tabs
-    const pinned = await chrome.tabs.query({ windowId, pinned: true });
-    const pinnedCount = Array.isArray(pinned) ? pinned.length : 0;
-    await chrome.tabGroups.move(match.id, { index: pinnedCount });
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Organize ALL groups in a window to be immediately after pinned tabs,
- * with no ungrouped tabs in between. Keeps groups ordered by their
- * first tab's index to preserve relative ordering.
+ * Organize the window according to the rules:
+ * 1. Pinned tabs first (implicit).
+ * 2. Groups to the left of ungrouped tabs.
+ * 3. Groups maintain relative order.
+ * 4. Ungrouped tabs maintain relative order.
  * @param {number} windowId
  */
-// Replace existing organizer with this version
-async function organizeGroupsInWindow(windowId) {
+async function organizeWindow(windowId) {
+  if (organizingWindows.has(windowId)) return;
+  organizingWindows.add(windowId);
+
   try {
-    if (windowId == null) return;
-    if (organizingWindows.has(windowId)) return;
-    organizingWindows.add(windowId);
+    const tabs = await chrome.tabs.query({ windowId });
+    // Sort by index to ensure we respect current order
+    tabs.sort((a, b) => a.index - b.index);
 
-    // 1) Read everything we need in parallel
-    const [allTabs0, groupMetas0, ruleGroups] = await Promise.all([
-      chrome.tabs.query({ windowId }),
-      chrome.tabGroups.query({ windowId }),
-      getGroups(), // your stored groups: [{ title, color, patterns }]
-    ]);
+    const pinnedTabs = tabs.filter(t => t.pinned);
+    const unpinnedTabs = tabs.filter(t => !t.pinned);
 
-    if (!Array.isArray(allTabs0) || !allTabs0.length) return;
+    // Identify groups and their first appearance
+    const seenGroups = new Set();
+    const orderedGroups = []; // { id: number, firstIndex: number }
+    const ungroupedTabs = [];
 
-    // Map groupId → title for this window
-    const groupTitleById = new Map(groupMetas0.map(g => [g.id, g.title]));
-
-    // 2) Enforce membership: every grouped tab must still match its group's title;
-    // if it doesn't, either move to the matching group or ungroup.
-    // Skip pinned tabs.
-    for (const t of allTabs0) {
-      if (t.pinned) continue;
-      const gid = typeof t.groupId === 'number' ? t.groupId : -1;
-      if (gid < 0) continue;
-
-      const url = t.url || t.pendingUrl;
-      const host = url ? getHostFromUrl(url) : null;
-      const path = url ? getPathFromUrl(url) : '/';
-      const match = host ? findMatchingGroup(host, path || '/', ruleGroups) : null;
-      const currentTitle = groupTitleById.get(gid);
-
-      if (!match) {
-        // No longer matches any rule → ungroup
-        try {
-          await chrome.tabs.ungroup(t.id);
-        } catch {}
-      } else if (match.title !== currentTitle) {
-        // Matches a different rule/group → move to that group
-        try {
-          await ensureTabInGroup(t, match, { skipOrganize: true });
-        } catch {}
+    for (const t of unpinnedTabs) {
+      if (t.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        if (!seenGroups.has(t.groupId)) {
+          seenGroups.add(t.groupId);
+          orderedGroups.push({ id: t.groupId, firstIndex: t.index });
+        }
+      } else {
+        ungroupedTabs.push(t);
       }
     }
 
-    // 3) Re-query tabs after potential moves so ordering decisions use current state
-    const allTabs = (await chrome.tabs.query({ windowId })).sort((a, b) => a.index - b.index);
-    const pinnedCount = allTabs.filter(t => t.pinned).length;
+    // Sort groups by their first appearance index to maintain relative order
+    orderedGroups.sort((a, b) => a.firstIndex - b.firstIndex);
 
-    // Collect ordered ungrouped tab ids (current order)
-    const orderedUngroupedTabIds = [];
-    for (const t of allTabs) {
-      if (t.pinned) continue;
-      const gid = typeof t.groupId === 'number' ? t.groupId : -1;
-      if (gid === -1) orderedUngroupedTabIds.push(t.id);
+    let currentIndex = pinnedTabs.length;
+
+    // Move groups
+    for (const group of orderedGroups) {
+      // Move the group to the current index
+      await chrome.tabGroups.move(group.id, { index: currentIndex });
+      
+      // Calculate how many tabs are in this group to advance the index
+      // We can't just count from our initial query because things might have shifted,
+      // but for the purpose of stacking, we can query the group's tabs.
+      const groupTabs = await chrome.tabs.query({ groupId: group.id });
+      currentIndex += groupTabs.length;
     }
 
-    // Find last grouped tab index to position ungrouped after all groups
-    const groupedTabs = allTabs.filter(t => !t.pinned && typeof t.groupId === 'number' && t.groupId >= 0);
-    if (groupedTabs.length === 0) {
-      // No groups in this window: do nothing (we don't order groups at all)
-      return;
-    }
-    let targetIndex = Math.max(...groupedTabs.map(t => t.index)) + 1;
-
-    // 4) Move only ungrouped tabs after the groups, preserving ungrouped order
-    for (const tabId of orderedUngroupedTabIds) {
+    // Move ungrouped tabs
+    // We move them one by one to the end
+    for (const t of ungroupedTabs) {
+      // Optimization: if it's already at the correct index, skip
+      // But we need to be careful because 'index' property on 't' is stale.
+      // So we just move it. 'move' is relatively cheap if it's already there (Chrome handles it).
+      // To be safe and avoid race conditions, we just move it.
       try {
-        await chrome.tabs.move(tabId, { index: targetIndex });
-      } catch {}
-      targetIndex += 1;
+        await chrome.tabs.move(t.id, { index: currentIndex });
+        currentIndex++;
+      } catch (e) {
+        // Tab might have been closed
+      }
     }
-  } catch {
-    // ignore
+
+  } catch (e) {
+    console.error('Error organizing window:', e);
   } finally {
     organizingWindows.delete(windowId);
   }
 }
 
 /**
+ * Debounced version of organizeWindow
+ * @param {number} windowId
+ */
+function scheduleOrganizeWindow(windowId) {
+  if (organizeTimers.has(windowId)) {
+    clearTimeout(organizeTimers.get(windowId));
+  }
+  const timerId = setTimeout(() => {
+    organizeTimers.delete(windowId);
+    organizeWindow(windowId);
+  }, 200); // 200ms debounce
+  organizeTimers.set(windowId, timerId);
+}
+
+/**
  * Ensure the given tab is in the appropriate group for the rule.
- * Reuses existing group with the same title in the same window, otherwise creates a new one.
  * @param {chrome.tabs.Tab} tab
  * @param {{color:string,title:string}} groupInfo
- * @param {{skipOrganize?: boolean}} [options]
- * @returns {Promise<number>} groupId
  */
-async function ensureTabInGroup(tab, groupInfo, options = {}) {
-  if (!tab || tab.id == null || tab.windowId == null) return -1;
+async function ensureTabInGroup(tab, groupInfo) {
+  if (!tab || tab.id == null || tab.windowId == null) return;
   const title = groupInfo.title;
   const color = groupInfo.color;
-  const skipOrganize = options.skipOrganize === true;
 
   // Find existing group by title in the same window
   const groups = await chrome.tabGroups.query({ windowId: tab.windowId });
   const existing = groups.find(g => g.title === title);
+  
   if (existing) {
-    await chrome.tabs.group({ tabIds: [tab.id], groupId: existing.id });
-    // Best-effort dedupe in case duplicates exist
-    await dedupeGroups(tab.windowId, title, color);
-    // Keep groups to the left of ungrouped tabs, preserving order
-    if (!skipOrganize) {
-      await organizeGroupsInWindow(tab.windowId);
+    if (tab.groupId !== existing.id) {
+      await chrome.tabs.group({ tabIds: [tab.id], groupId: existing.id });
     }
-    return existing.id;
+    // Ensure color/title match (in case it was just created or changed)
+    if (existing.color !== color) {
+        await chrome.tabGroups.update(existing.id, { color });
+    }
+  } else {
+    // Create new group
+    const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+    await chrome.tabGroups.update(groupId, { title, color });
   }
-
-  // Create a new group by grouping the tab, then set metadata
-  const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
-  await chrome.tabGroups.update(groupId, { title, color });
-  // Immediately try to dedupe after setting title/color (handles race where multiple tabs create simultaneously)
+  
+  // Dedupe just in case
   await dedupeGroups(tab.windowId, title, color);
-  // Keep groups to the left of ungrouped tabs, preserving order
-  if (!skipOrganize) {
-    await organizeGroupsInWindow(tab.windowId);
-  }
-  return groupId;
+  
+  // Trigger organization
+  scheduleOrganizeWindow(tab.windowId);
 }
 
 /**
@@ -458,35 +437,46 @@ async function processTabId(tabId) {
 }
 
 /**
- * Process tab: determine if it matches a rule and group it.
+ * Process tab: determine if it matches a rule and group/ungroup it.
  * @param {chrome.tabs.Tab} tab
  */
 async function processTab(tab) {
   if (!tab || tab.id == null) return;
+  if (tab.pinned) return; // Ignore pinned tabs
+
   const url = tab.url || tab.pendingUrl;
   const host = url ? getHostFromUrl(url) : null;
-  if (!host) return;
-  const path = url ? getPathFromUrl(url) : null;
+  
+  // If no host (e.g. chrome://), we might still need to ungroup if it was previously grouped
+  // But for now, let's just check if it matches any rule.
+  
   const groups = await getGroups();
-  const match = findMatchingGroup(host, path || '/', groups);
+  const path = url ? getPathFromUrl(url) : null;
+  const match = host ? findMatchingGroup(host, path || '/', groups) : null;
+
   if (match) {
     await ensureTabInGroup(tab, match);
-    return;
-  }
-  // If no match, ungroup the tab if it currently belongs to one of our managed groups
-  try {
-    if (typeof tab.groupId === 'number' && tab.groupId >= 0) {
-      const currentGroup = await chrome.tabGroups.get(tab.groupId);
-      const managedTitles = new Set(groups.map(g => g.title));
-      if (currentGroup && managedTitles.has(currentGroup.title)) {
-        await chrome.tabs.ungroup(tab.id);
-        if (tab.windowId != null) {
-          await organizeGroupsInWindow(tab.windowId);
+  } else {
+    // If it doesn't match, and it IS in a managed group, ungroup it.
+    if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+      try {
+        const currentGroup = await chrome.tabGroups.get(tab.groupId);
+        // Check if the current group title matches any of our managed rules
+        // If it does, we should ungroup. If it's a user-made group not in our rules, leave it?
+        // The user requirement says: "When the url in a tab changes it should be checked and assigned/reassigned to/from a group if necessary"
+        // This implies if it was in a group because of a rule, and now doesn't match, it should leave.
+        // If it's in a custom group, we might want to leave it alone?
+        // But "All tab groups should be to the left".
+        // Let's assume we only ungroup if it matches a managed group title.
+        const managedTitles = new Set(groups.map(g => g.title));
+        if (currentGroup && managedTitles.has(currentGroup.title)) {
+           await chrome.tabs.ungroup(tab.id);
+           scheduleOrganizeWindow(tab.windowId);
         }
+      } catch (e) {
+        // Group might not exist
       }
     }
-  } catch {
-    // ignore
   }
 }
 
@@ -496,87 +486,108 @@ async function processTab(tab) {
 async function sweepAllTabs() {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
-    const url = tab.url || tab.pendingUrl;
-    const host = url ? getHostFromUrl(url) : null;
-    if (!host) continue;
     await processTab(tab);
+  }
+  // Also organize all windows
+  const windows = new Set(tabs.map(t => t.windowId));
+  for (const winId of windows) {
+    scheduleOrganizeWindow(winId);
   }
 }
 
 // Handle extension lifecycle events
 chrome.runtime.onInstalled.addListener(() => {
-  // Initial sweep after install/update
   sweepAllTabs();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  // Sweep after browser startup
   sweepAllTabs();
 });
 
 // React to storage changes (rules updated)
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'sync' && changes.groupingRules) {
-    // Re-sweep to apply new rules
     sweepAllTabs();
   }
-	// No immediate action needed for autoClosePatterns; new events will read latest values
 });
 
 // Tab events
 chrome.tabs.onCreated.addListener((tab) => {
-  // URL can be missing at creation; we'll also handle onUpdated
   processTab(tab);
-  if (tab && tab.windowId != null) {
-    organizeGroupsInWindow(tab.windowId);
+  if (tab.windowId != null) {
+    scheduleOrganizeWindow(tab.windowId);
   }
-	maybeScheduleAutoClose(tab);
+  maybeScheduleAutoClose(tab);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Process when URL changes or tab load completes
   if (changeInfo.url || changeInfo.status === 'complete') {
     processTabId(tabId);
-    try {
-      if (tab && tab.windowId != null) {
-        organizeGroupsInWindow(tab.windowId);
-      } else {
-        chrome.tabs.get(tabId).then(t => {
-          if (t && t.windowId != null) organizeGroupsInWindow(t.windowId);
-        }).catch(() => {});
-      }
-    } catch {}
-		// Attempt to schedule auto-close when URL changes or load completes
-		if (tab) {
-			maybeScheduleAutoClose(tab);
-		} else {
-			chrome.tabs.get(tabId).then(t => maybeScheduleAutoClose(t)).catch(() => {});
-		}
+    if (tab) {
+        maybeScheduleAutoClose(tab);
+    }
   }
 });
 
-// Cleanup timers when tabs are removed
-chrome.tabs.onRemoved.addListener((tabId) => {
+// When a tab is attached to a window (e.g. moved between windows)
+chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
+    processTabId(tabId);
+    scheduleOrganizeWindow(attachInfo.windowId);
+});
+
+// When a tab is moved within a window, we might need to re-enforce order
+// But if the user moved it, we should respect that?
+// "Tab groups should maintain the order they are in relative to each other, unless moved by the user."
+// "All ungrouped tabs should maintain their order relative to each other."
+// If user moves a tab, we shouldn't immediately snap it back UNLESS it violates "Groups to the left".
+// So if user moves an ungrouped tab to the left of a group, we should move it back?
+// Requirement 1: "All tab groups should be to the left of ungrouped tabs."
+// So yes, we should enforce this.
+chrome.tabs.onMoved.addListener((tabId, moveInfo) => {
+    scheduleOrganizeWindow(moveInfo.windowId);
+});
+
+// When a tab is detached, organize the old window
+chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+    scheduleOrganizeWindow(detachInfo.oldWindowId);
+});
+
+// When a tab is removed
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 	const t = autoCloseTimers.get(tabId);
 	if (t) {
 		clearTimeout(t);
 		autoCloseTimers.delete(tabId);
 	}
+    if (!removeInfo.isWindowClosing) {
+        scheduleOrganizeWindow(removeInfo.windowId);
+    }
 });
 
-// Group events: dedupe when groups are created or updated with titles
+// Group events
 chrome.tabGroups.onCreated.addListener((group) => {
-  if (group && group.title && group.windowId != null) {
-    dedupeGroups(group.windowId, group.title, group.color);
-    organizeGroupsInWindow(group.windowId);
+  if (group.windowId != null) {
+    scheduleOrganizeWindow(group.windowId);
   }
 });
 
 chrome.tabGroups.onUpdated.addListener((group) => {
-  if (group && group.title && group.windowId != null) {
-    dedupeGroups(group.windowId, group.title, group.color);
-    organizeGroupsInWindow(group.windowId);
+  if (group.windowId != null) {
+    // If title changed, we might need to dedupe
+    if (group.title) {
+        dedupeGroups(group.windowId, group.title, group.color);
+    }
+    scheduleOrganizeWindow(group.windowId);
   }
+});
+
+chrome.tabGroups.onMoved.addListener((group) => {
+    // If user moves a group, we should respect the new order of groups.
+    // Our organizeWindow logic respects the current order of groups (by firstIndex).
+    // So we just need to make sure ungrouped tabs are still to the right.
+    if (group.windowId != null) {
+        scheduleOrganizeWindow(group.windowId);
+    }
 });
 
 // Keyboard command: open options with prepopulated rule from active tab
@@ -595,5 +606,3 @@ chrome.commands.onCommand.addListener(async (command) => {
     chrome.runtime.openOptionsPage();
   }
 });
-
-

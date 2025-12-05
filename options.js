@@ -48,6 +48,7 @@ function patternItem(initial = '') {
   const removeBtn = el('button', { type: 'button', class: 'tiny danger' }, 'Remove');
   removeBtn.addEventListener('click', () => {
     wrap.remove();
+		if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
   wrap.appendChild(input);
   wrap.appendChild(removeBtn);
@@ -62,6 +63,7 @@ function autoClosePatternItem(initial = { pattern: '', delaySeconds: 1 }) {
 	const removeBtn = el('button', { type: 'button', class: 'tiny danger' }, 'Remove');
 	removeBtn.addEventListener('click', () => {
 		wrap.remove();
+		if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
 	});
 	wrap.appendChild(input);
 	wrap.appendChild(selDelay);
@@ -89,6 +91,7 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
     list.appendChild(patternItem(''));
     const lastInput = list.querySelector('.pattern-item:last-child input');
     if (lastInput) lastInput.focus();
+		if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
 
   const selColor = colorSelect(group.color || 'grey');
@@ -96,6 +99,7 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
   const btnRemove = el('button', { class: 'danger', type: 'button' }, 'Remove');
   btnRemove.addEventListener('click', () => {
     tr.remove();
+		if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
 
   tdTitle.appendChild(ipTitle);
@@ -228,6 +232,7 @@ function addAutoClosePattern() {
 	list.appendChild(autoClosePatternItem({ pattern: '', delaySeconds: 1 }));
 	const lastInput = list.querySelector('.pattern-item:last-child input');
 	if (lastInput) lastInput.focus();
+	if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
 }
 
 function getAutoClosePatternsFromUI() {
@@ -244,6 +249,12 @@ function getAutoClosePatternsFromUI() {
 		out.push({ pattern, delaySeconds });
 	}
 	return out;
+}
+
+// Return groups but ignore empty placeholder rows (no title and no patterns)
+function getGroupsFromUIForCompare() {
+	const groups = getRowsData();
+	return groups.filter(g => (g.title && g.title.trim()) || (Array.isArray(g.patterns) && g.patterns.length > 0));
 }
 
 async function saveRules() {
@@ -285,11 +296,16 @@ async function saveRules() {
 	}
 	await chrome.storage.sync.set({ groupingRules: groups, autoClosePatterns });
   showStatus('Saved');
+	// Update snapshots and indicator
+	lastSavedGroupsJson = serializeForCompare(groups);
+	lastSavedAutoJson = serializeForCompare(autoClosePatterns);
+	updateUnsavedIndicator();
 }
 
 function addRuleRow() {
   const tbody = $('#rules-tbody');
   tbody.appendChild(groupRow());
+	if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
 }
 
 function applyPrepopulatedRule(pre) {
@@ -315,6 +331,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 	if (saveAutoBtn) saveAutoBtn.addEventListener('click', saveRules);
   await loadRules();
 	await loadAutoClosePatterns();
+	// Global listeners to detect unsaved changes
+	document.addEventListener('input', updateUnsavedIndicator, true);
+	document.addEventListener('change', updateUnsavedIndicator, true);
+	await refreshSavedSnapshotsFromStorage();
   try {
     const { prepopulateRule } = await chrome.storage.local.get({ prepopulateRule: null });
     if (prepopulateRule) {
@@ -325,5 +345,54 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ignore
   }
 });
+
+// ===== Unsaved changes indicator tracking =====
+let lastSavedGroupsJson = '[]';
+let lastSavedAutoJson = '[]';
+
+function serializeForCompare(obj) {
+	try {
+		return JSON.stringify(obj);
+	} catch {
+		return '';
+	}
+}
+
+function setUnsavedVisible(visible) {
+	const elInd = $('#dirty-indicator');
+	if (!elInd) return;
+	elInd.style.display = visible ? '' : 'none';
+}
+
+function updateUnsavedIndicator() {
+	const currentGroupsJson = serializeForCompare(getGroupsFromUIForCompare());
+	const currentAutoJson = serializeForCompare(getAutoClosePatternsFromUI());
+	const dirty = (currentGroupsJson !== lastSavedGroupsJson) || (currentAutoJson !== lastSavedAutoJson);
+	setUnsavedVisible(dirty);
+}
+
+async function refreshSavedSnapshotsFromStorage() {
+	try {
+		const { groupingRules, autoClosePatterns } = await chrome.storage.sync.get({ groupingRules: [], autoClosePatterns: [] });
+		const autoNormalized = [];
+		const rawAuto = Array.isArray(autoClosePatterns) ? autoClosePatterns : [];
+		for (const it of rawAuto) {
+			if (typeof it === 'string') {
+				autoNormalized.push({ pattern: it, delaySeconds: 1 });
+			} else if (it && typeof it.pattern === 'string') {
+				let d = Number(it.delaySeconds ?? it.delay);
+				if (!Number.isFinite(d)) d = 1;
+				d = Math.min(10, Math.max(1, Math.floor(d)));
+				autoNormalized.push({ pattern: it.pattern, delaySeconds: d });
+			}
+		}
+		lastSavedGroupsJson = serializeForCompare(Array.isArray(groupingRules) ? groupingRules : []);
+		lastSavedAutoJson = serializeForCompare(autoNormalized);
+	} catch {
+		lastSavedGroupsJson = '[]';
+		lastSavedAutoJson = '[]';
+	}
+	updateUnsavedIndicator();
+}
 
 
