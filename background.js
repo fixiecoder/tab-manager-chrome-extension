@@ -26,6 +26,7 @@ const organizeTimers = new Map();
  *   Array<{
  *     title: string,
  *     color: string,
+ *     type: 'group' | 'pin',
  *     patterns: string[] // each is a pattern (host or host+path with optional '*')
  *   }>
  * Legacy schema (supported, auto-migrated):
@@ -41,8 +42,9 @@ async function getGroups() {
     return data.map(g => ({
       title: String(g.title || '').trim(),
       color: normalizeColor(g.color),
+      type: g.type === 'pin' ? 'pin' : 'group',
       patterns: Array.isArray(g.patterns) ? g.patterns.filter(Boolean) : []
-    })).filter(g => g.title && g.patterns.length > 0);
+    })).filter(g => (g.type === 'pin' || g.title) && g.patterns.length > 0);
   }
   // Legacy schema → migrate in-memory and write back
   const byTitle = new Map();
@@ -51,7 +53,7 @@ async function getGroups() {
     const title = (r.title && String(r.title).trim()) || r.pattern;
     const color = normalizeColor(r.color);
     if (!byTitle.has(title)) {
-      byTitle.set(title, { title, color, patterns: [] });
+      byTitle.set(title, { title, color, type: 'group', patterns: [] });
     }
     const g = byTitle.get(title);
     if (!g.patterns.includes(r.pattern)) g.patterns.push(r.pattern);
@@ -190,9 +192,15 @@ function patternMatchesUrl(pattern, host, pathname) {
   if (!pattern || !host) return false;
   const slashIdx = pattern.indexOf('/');
   const hostPattern = slashIdx >= 0 ? pattern.slice(0, slashIdx) : pattern;
-  const pathPattern = slashIdx >= 0 ? pattern.slice(slashIdx) : null; // includes leading '/'
+  let pathPattern = slashIdx >= 0 ? pattern.slice(slashIdx) : null; // includes leading '/'
   if (!patternMatchesHost(hostPattern, host)) return false;
   if (!pathPattern) return true;
+
+  // Implicit wildcard: if no wildcard, treat as prefix match
+  if (!pathPattern.includes('*')) {
+    pathPattern += '*';
+  }
+
   const path = pathname || '/';
   if (pathPattern.includes('*')) {
     return globToRegExp(pathPattern).test(path);
@@ -205,15 +213,19 @@ function patternMatchesUrl(pattern, host, pathname) {
  * Returns the matching group (title, color) or null.
  * @param {string} host
  * @param {string} pathname
- * @param {Array<{title:string,color:string,patterns:string[]}>} groups
+ * @param {Array<{title:string,color:string,type:string,patterns:string[]}>} groups
  */
 function findMatchingGroup(host, pathname, groups) {
   if (!host) return null;
   for (const g of groups) {
-    if (!g || !g.title || !Array.isArray(g.patterns)) continue;
+    if (!g || (g.type !== 'pin' && !g.title) || !Array.isArray(g.patterns)) continue;
     for (const p of g.patterns) {
       if (typeof p === 'string' && patternMatchesUrl(p, host, pathname)) {
-        return { title: g.title, color: normalizeColor(g.color) };
+        return {
+          title: g.title,
+          color: normalizeColor(g.color),
+          type: g.type || 'group'
+        };
       }
     }
   }
@@ -442,7 +454,8 @@ async function processTabId(tabId) {
  */
 async function processTab(tab) {
   if (!tab || tab.id == null) return;
-  if (tab.pinned) return; // Ignore pinned tabs
+  // Note: We do NOT return early for pinned tabs anymore, because we might need to UNPIN them
+  // if they match a group rule, or we might need to pin them if they match a pin rule.
 
   const url = tab.url || tab.pendingUrl;
   const host = url ? getHostFromUrl(url) : null;
@@ -455,20 +468,43 @@ async function processTab(tab) {
   const match = host ? findMatchingGroup(host, path || '/', groups) : null;
 
   if (match) {
-    await ensureTabInGroup(tab, match);
+    if (match.type === 'pin') {
+      // Rule says PIN
+      // 1. Ungroup if needed (pinned tabs usually shouldn't be in a group)
+      if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        try {
+          await chrome.tabs.ungroup(tab.id);
+        } catch { }
+      }
+      // 2. Pin if needed
+      if (!tab.pinned) {
+        await chrome.tabs.update(tab.id, { pinned: true });
+        // Organizing window might happen automatically by browser or our listeners
+      }
+    } else {
+      // Rule says GROUP
+      // 1. Unpin if needed
+      if (tab.pinned) {
+        await chrome.tabs.update(tab.id, { pinned: false });
+      }
+      // 2. Group
+      await ensureTabInGroup(tab, match);
+    }
   } else {
-    // If it doesn't match, and it IS in a managed group, ungroup it.
+    // No matching rule
+    // If it was pinned, leave it pinned (manual user action).
+    // If it was in a managed group, we should ungroup it.
+
+    if (tab.pinned) {
+      // Do nothing for pinned tabs that don't match any rule.
+      return;
+    }
+
     if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
       try {
         const currentGroup = await chrome.tabGroups.get(tab.groupId);
-        // Check if the current group title matches any of our managed rules
-        // If it does, we should ungroup. If it's a user-made group not in our rules, leave it?
-        // The user requirement says: "When the url in a tab changes it should be checked and assigned/reassigned to/from a group if necessary"
-        // This implies if it was in a group because of a rule, and now doesn't match, it should leave.
-        // If it's in a custom group, we might want to leave it alone?
-        // But "All tab groups should be to the left".
-        // Let's assume we only ungroup if it matches a managed group title.
-        const managedTitles = new Set(groups.map(g => g.title));
+        // Only ungroup if the group title looks like a managed one
+        const managedTitles = new Set(groups.filter(g => g.type !== 'pin').map(g => g.title));
         if (currentGroup && managedTitles.has(currentGroup.title)) {
           await chrome.tabs.ungroup(tab.id);
           scheduleOrganizeWindow(tab.windowId);

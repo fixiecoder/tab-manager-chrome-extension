@@ -71,12 +71,40 @@ function autoClosePatternItem(initial = { pattern: '', delaySeconds: 1 }) {
   return wrap;
 }
 
-function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
+function typeSelect(value = 'group') {
+  const select = el('select', { class: 'type-select' });
+  const opts = [
+    { v: 'group', t: 'Group' },
+    { v: 'pin', t: 'Pin' }
+  ];
+  for (const o of opts) {
+    const opt = el('option', { value: o.v, text: o.t });
+    if (o.v === value) opt.selected = true;
+    select.appendChild(opt);
+  }
+  return select;
+}
+
+function groupRow(group = { title: '', color: 'grey', patterns: [], type: 'group' }) {
   const tr = el('tr');
+  const tdType = el('td');
   const tdTitle = el('td');
   const tdPatterns = el('td');
   const tdColor = el('td');
   const tdActions = el('td');
+
+  const selType = typeSelect(group.type || 'group');
+  // Toggle inputs based on type
+  selType.addEventListener('change', () => {
+    const isPin = selType.value === 'pin';
+    ipTitle.disabled = isPin;
+    selColor.disabled = isPin;
+    if (isPin) {
+      ipTitle.value = '';
+      selColor.value = 'grey'; // visual reset
+    }
+    if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
+  });
 
   const ipTitle = el('input', { type: 'text', placeholder: 'Group title' });
   ipTitle.value = group.title || '';
@@ -102,12 +130,20 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
     if (typeof updateUnsavedIndicator === 'function') updateUnsavedIndicator();
   });
 
+  // Init state
+  if (group.type === 'pin') {
+    ipTitle.disabled = true;
+    selColor.disabled = true;
+  }
+
+  tdType.appendChild(selType);
   tdTitle.appendChild(ipTitle);
   tdPatterns.appendChild(list);
   tdPatterns.appendChild(addBtn);
   tdColor.appendChild(selColor);
   tdActions.appendChild(btnRemove);
 
+  tr.appendChild(tdType);
   tr.appendChild(tdTitle);
   tr.appendChild(tdPatterns);
   tr.appendChild(tdColor);
@@ -119,13 +155,15 @@ function groupRow(group = { title: '', color: 'grey', patterns: [] }) {
 function getRowsData() {
   const rows = Array.from(document.querySelectorAll('#rules-tbody tr'));
   return rows.map(row => {
-    const ipTitle = row.querySelector('td:nth-child(1) input');
+    const selType = row.querySelector('.type-select');
+    const ipTitle = row.querySelector('td:nth-child(2) input'); // adjusted index
     const list = row.querySelector('.pattern-list');
-    const selColor = row.querySelector('select');
+    const selColor = row.querySelector('td:nth-child(4) select'); // adjusted index (color is 4th col now)
     const patterns = Array.from(list ? list.querySelectorAll('input[type="text"]') : [])
       .map(i => (i.value || '').trim())
       .filter(Boolean);
     return {
+      type: selType ? selType.value : 'group',
       title: (ipTitle.value || '').trim(),
       color: selColor.value,
       patterns
@@ -262,8 +300,8 @@ async function saveRules() {
   // Validate
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    if (!g.title) {
-      showStatus(`Row ${i + 1}: Title is required`, true);
+    if (g.type !== 'pin' && !g.title) {
+      showStatus(`Row ${i + 1}: Title is required for groups`, true);
       return;
     }
     if (!COLORS.includes(g.color)) {
@@ -313,6 +351,7 @@ function applyPrepopulatedRule(pre) {
   const tbody = $('#rules-tbody');
   // Always create a new group row at the top rather than editing existing rows
   const row = groupRow({
+    type: 'group',
     title: (pre.title && String(pre.title).trim()) || pre.pattern,
     color: (pre.color && COLORS.includes(pre.color)) ? pre.color : 'grey',
     patterns: [pre.pattern]
