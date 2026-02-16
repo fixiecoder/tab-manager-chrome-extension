@@ -1,6 +1,6 @@
 {
   "name": "tab-manager-chrome-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Automatically group Chrome tabs by configured domains or wildcard subdomains.",
   "license": "MIT",
