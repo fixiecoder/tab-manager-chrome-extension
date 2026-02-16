@@ -24,14 +24,24 @@
           <tr>
             <th style="width:15%">Type</th>
             <th style="width:23%">Title</th>
-            <th style="width:52%">Patterns</th>
+            <th style="width:52%">
+              Patterns
+              <button class="help-icon" data-for="help-patterns" aria-label="Help">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </button>
+            </th>
             <th style="width:10%">Color</th>
             <th style="width:10%"></th>
           </tr>
         </thead>
         <tbody id="rules-tbody"></tbody>
       </table>
-      <div class="help">
+      <div id="help-patterns" class="help">
         <p>
           Patterns:
         </p>
@@ -48,14 +58,24 @@
     </section>
 
     <section>
-      <h2>Auto-close tabs (1s)</h2>
+      <h2>
+        Auto-close tabs (1s)
+        <button class="help-icon" data-for="help-autoclose" aria-label="Help">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+      </h2>
       <p>Add URL patterns. Matching tabs will auto close after selected delay (1–10s).</p>
       <div id="autoclose-list" class="pattern-list"></div>
       <div class="actions">
         <button id="autoclose-add">Add pattern</button>
         <button id="save-autoclose" class="primary">Save</button>
       </div>
-      <div class="help">
+      <div id="help-autoclose" class="help">
         <p>Patterns use the same format as above (host with optional path, <code>*</code> wildcard allowed).</p>
       </div>
     </section>

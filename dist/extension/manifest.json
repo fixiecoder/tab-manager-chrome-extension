@@ -1,8 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "Auto Tab Grouper by Domain",
+  "name": "Colin's Tab Manager",
   "version": "0.1.0",
   "description": "Automatically group tabs by configured domains or wildcard subdomains.",
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
   "permissions": [
     "tabs",
     "tabGroups",

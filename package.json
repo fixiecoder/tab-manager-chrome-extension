@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "npm run clean && mkdir -p dist/extension && cp manifest.json background.js options.html options.css options.js dist/extension/",
+    "build": "npm run clean && mkdir -p dist/extension && cp manifest.json background.js options.html options.css options.js icon16.png icon32.png icon48.png icon128.png dist/extension/",
     "zip": "cd dist && zip -r extension.zip extension",
     "package": "npm run build && npm run zip"
   },

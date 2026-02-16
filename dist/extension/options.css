@@ -12,7 +12,8 @@
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   background: var(--bg);
@@ -84,7 +85,9 @@ table.rules thead th {
   font-weight: 600;
 }
 
-input[type="text"], select, textarea {
+input[type="text"],
+select,
+textarea {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -120,9 +123,59 @@ button.tiny {
   font-size: 12px;
 }
 
+
+/* Help icons and toggles */
 .help {
+  display: none;
   margin-top: 10px;
+  padding: 12px;
+  background: #f8f9fa;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.help.visible {
+  display: block;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
   color: var(--muted);
+  border-radius: 50%;
+  vertical-align: middle;
+  transition: color 0.2s, background-color 0.2s;
+  margin-left: 4px;
+}
+
+.help-icon:hover {
+  color: var(--primary);
+  background-color: #e8f0fe;
+}
+
+.help-icon svg {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 #status {
@@ -155,5 +208,3 @@ button.tiny {
   max-width: 96px;
   flex: 0 0 auto;
 }
-
-

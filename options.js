@@ -391,6 +391,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       await chrome.storage.local.remove('prepopulateRule');
     }
   });
+
+  // Help icon toggles
+  document.querySelectorAll('.help-icon').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const targetId = btn.getAttribute('data-for');
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.classList.toggle('visible');
+      }
+    });
+  });
 });
 
 // ===== Unsaved changes indicator tracking =====
